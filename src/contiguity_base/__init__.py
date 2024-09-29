@@ -1,9 +1,10 @@
-from .base import Base, Contiguity, Util, connect
+from .base import Base, BaseItem, FetchResponse, ItemConflictError, ItemNotFoundError
 
 __all__ = (
     "Base",
-    "Contiguity",
-    "Util",
-    "connect",
+    "BaseItem",
+    "FetchResponse",
+    "ItemConflictError",
+    "ItemNotFoundError",
 )
 __version__ = "1.0.0"

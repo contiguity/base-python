@@ -23,13 +23,13 @@ db = connect("your-api-key", "your-project-id")
 You can get an API key by fetching it in the [dashboard](https://base.contiguity.co), and a project ID is given to you when creating a project.
 
 ## <img src="https://avatars.githubusercontent.com/u/47275976?s=280&v=4" alt="Deta Logo" style="vertical-align: middle;" height="30"> For those moving from Deta Space <img src="https://avatars.githubusercontent.com/u/47275976?s=280&v=4" alt="Deta Logo" style="vertical-align: middle;" height="30">
-Contiguity Base is a one-to-one replacement for the old Deta Base API, Deta Base JavaScript SDK, Deta Base Python SDK, and Deta Base Go SDK. The only thing that has changed is initialization. 
+Contiguity Base is a one-to-one replacement for the old Deta Base API, Deta Base JavaScript SDK, Deta Base Python SDK, and Deta Base Go SDK. The only thing that has changed is initialization.
 
 Instead of `deta = Deta(project_key)`, you'll use `db = connect(api_key, project_id)`
 
 The rest stays the same, because at Contiguity, we think it's crazy for a cloud provider to give you 45 days to move dozens of apps from their proprietary database.
 
-If you're transitioning from Deta Space to Contiguity, welcome! 
+If you're transitioning from Deta Space to Contiguity, welcome!
 
 ## Creating your first "base" 📊
 
@@ -129,7 +129,7 @@ results = my_base.fetch({
 
 ```python
 {
-  "age": 22, 
+  "age": 22,
   "name": "Sarah"
 }
 ```
@@ -137,7 +137,7 @@ results = my_base.fetch({
 - **Hierarchical**  
 ```python
 {
-  "user.profile.age": 22, 
+  "user.profile.age": 22,
   "user.profile.name": "Sarah"
 }
 ```
@@ -152,8 +152,8 @@ results = my_base.fetch({
 - **Nested Object**  
 ```python
 {
-  "time": { 
-    "day": "Tuesday", 
+  "time": {
+    "day": "Tuesday",
     "hour": "08:00"
   }
 }
