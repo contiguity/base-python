@@ -40,40 +40,65 @@ class Base:
         try:
             response = requests.request(
                 method, url, headers=headers, json=body)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
+            if not response.ok:
+                if response.status_code == 404:
+                    return None
+                print(f"HTTP error! status: {response.status_code}, body: {response.text}")
                 return None
-            print(
-                f"HTTP error! status: {e.response.status_code}, body: {e.response.text}")
+            return response.json()
         except requests.exceptions.RequestException as e:
             if self.db.debug:
                 print(f"Request failed: {str(e)}")
+            return None
+
+    def calculate_expires(self, expire_in: Optional[int], expire_at: Optional[Union[datetime, str]]) -> Optional[int]:
+        if expire_at:
+            if isinstance(expire_at, datetime):
+                return int(expire_at.timestamp())
+            else:
+                return int(datetime.fromisoformat(expire_at).timestamp())
+        elif expire_in:
+            return int(datetime.now().timestamp()) + expire_in
         return None
 
-    def put(self, data: Union[Dict, List[Dict]], key: Optional[str] = None, expire_in: Optional[int] = None, expire_at: Optional[Union[datetime, str]] = None) -> Optional[Dict]:
+    def put(self, items: Union[Dict, List[Dict]], key: Optional[str] = None, expire_in: Optional[int] = None, expire_at: Optional[Union[datetime, str]] = None, options: Optional[Dict] = None) -> Optional[Dict]:
         path = "/items"
+        options = options or {}
 
-        if isinstance(data, dict):
-            if key:
-                data['key'] = key
-            items = [data]
-        elif isinstance(data, list):
-            items = data
+        # Handle both direct parameters and options
+        expire_in = expire_in or options.get('expireIn')
+        expire_at = expire_at or options.get('expireAt')
+
+        if isinstance(items, dict):
+            items_array = [{"key": key, **items}] if key else [items]
         else:
-            raise ValueError(
-                "Data must be either a dictionary or a list of dictionaries")
+            items_array = items
 
-        request_body = {"items": items}
+        for item in items_array:
+            expires = self.calculate_expires(expire_in, expire_at)
+            if expires:
+                item['__expires'] = expires
 
-        if expire_in is not None:
-            request_body["expireIn"] = expire_in
+        return self._fetch("PUT", path, {"items": items_array})
 
-        if expire_at is not None:
-            request_body["expireAt"] = expire_at
+    def insert(self, data: Dict, key: Optional[str] = None, expire_in: Optional[int] = None, expire_at: Optional[Union[datetime, str]] = None, options: Optional[Dict] = None) -> Optional[Dict]:
+        path = "/items"
+        options = options or {}
 
-        return self._fetch("PUT", path, request_body)
+        if key:
+            data['key'] = key
+
+        request_body = {"item": data}
+
+        # Handle both direct parameters and options
+        expire_in = expire_in or options.get('expireIn')
+        expire_at = expire_at or options.get('expireAt')
+
+        expires = self.calculate_expires(expire_in, expire_at)
+        if expires:
+            request_body["item"]["__expires"] = expires
+
+        return self._fetch("POST", path, request_body)
 
     def get(self, key: str) -> Optional[Dict]:
         return self._fetch("GET", f"/items/{key}")
@@ -81,26 +106,46 @@ class Base:
     def delete(self, key: str) -> Optional[Dict]:
         return self._fetch("DELETE", f"/items/{key}")
 
-    def update(self, updates: Dict[str, Any], key: str, expire_in: Optional[int] = None, expire_at: Optional[Union[datetime, str]] = None) -> Optional[Dict]:
+    def update(self, updates: Dict[str, Any], key: str, options: Optional[Dict] = None) -> Optional[Dict]:
+        options = options or {}
         processed_updates = {
-            field: (value if isinstance(value, dict) and "__op" in value else {"__op": "set", "value": value})
-            for field, value in updates.items()
+            "set": {},
+            "increment": {},
+            "append": {},
+            "prepend": {},
+            "delete": []
         }
-        
-        request_body = {"updates": processed_updates}
 
-        if expire_in is not None:
-            request_body["expireIn"] = expire_in
-        
-        if expire_at is not None:
-            if isinstance(expire_at, datetime):
-                request_body["expireAt"] = expire_at.isoformat()
+        for field, value in updates.items():
+            if isinstance(value, dict) and "__op" in value:
+                op = value["__op"]
+                if op == "increment":
+                    processed_updates["increment"][field] = value["value"]
+                elif op == "append":
+                    processed_updates["append"][field] = value["value"]
+                elif op == "prepend":
+                    processed_updates["prepend"][field] = value["value"]
+                elif op == "delete":
+                    processed_updates["delete"].append(field)
+                else:
+                    processed_updates["set"][field] = value["value"]
             else:
-                request_body["expireAt"] = expire_at
+                processed_updates["set"][field] = value
 
-        return self._fetch("PATCH", f"/items/{key}", request_body)
+        expires = self.calculate_expires(
+            options.get('expireIn'), options.get('expireAt'))
+        if expires:
+            processed_updates["set"]["__expires"] = expires
 
-    def fetch(self, query: Optional[Dict] = None, limit: Optional[int] = None, last: Optional[str] = None) -> Dict[str, Any]:
+        return self._fetch("PATCH", f"/items/{key}", {"updates": processed_updates})
+
+    def fetch(self, query: Optional[Dict] = None, limit: Optional[int] = None, last: Optional[str] = None, options: Optional[Dict] = None) -> Dict[str, Any]:
+        options = options or {}
+
+        # Handle both direct parameters and options
+        limit = limit or options.get('limit')
+        last = last or options.get('last')
+
         query_params = {
             "query": query,
             "limit": limit,
@@ -112,41 +157,30 @@ class Base:
             print(f"Fetch params sent to server: {query_params}")
 
         response = self._fetch("POST", "/query", query_params)
-        return {
-            "items": response.get("items", []),
-            "last": response.get("last"),
-            "count": response.get("count", 0)
-        }
+        if response:
+            return {
+                "items": response.get("items", []),
+                "last": response.get("last"),
+                "count": response.get("count", 0)
+            }
+        return {"items": [], "last": None, "count": 0}
 
+    def put_many(self, items: List[Dict]) -> Optional[Dict]:
+        if not isinstance(items, list) or len(items) == 0:
+            raise ValueError("put_many requires a non-empty list of items")
+        return self.put(items)
 
-    def insert(self, data: Dict, key: Optional[str] = None, expire_in: Optional[int] = None, expire_at: Optional[Union[datetime, str]] = None) -> Optional[Dict]:
-        path = "/items"
-        
-        if key:
-            data['key'] = key
-
-        request_body = {"item": data}
-
-        if expire_in is not None:
-            request_body["expireIn"] = expire_in
-        
-        if expire_at is not None:
-            if isinstance(expire_at, datetime):
-                request_body["expireAt"] = expire_at.isoformat()
-            else:
-                request_body["expireAt"] = expire_at
-
-        return self._fetch("POST", path, request_body)
 
 class Contiguity:
     def __init__(self, api_key: str, project_id: str, debug: bool = False):
         self.api_key = api_key
         self.project_id = project_id
-        self.base_url = "https://api.base.contiguity.co/v1"
+        self.base_url = "https://base.api.contiguity.co/v1"
         self.debug = debug
 
     def Base(self, name: str) -> Base:
         return Base(self, name)
+
 
 def connect(api_key: str, project_id: str, debug: bool = False) -> Contiguity:
     return Contiguity(api_key, project_id, debug)
