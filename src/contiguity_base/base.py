@@ -68,6 +68,33 @@ class _UpdatePayload(BaseModel):
     prepend: dict[str, Sequence[DataType]] = {}
     delete: list[str] = []
 
+    @classmethod
+    def from_updates_mapping(cls: type[Self], updates: Mapping[str, DataType | _UpdateOperation], /) -> Self:
+        set = {}
+        increment = {}
+        append = {}
+        prepend = {}
+        delete = []
+        for attr, value in updates.items():
+            if isinstance(value, _UpdateOperation):
+                if isinstance(value, _Trim):
+                    delete.append(attr)
+                elif isinstance(value, _Increment):
+                    increment[attr] = value.value
+                elif isinstance(value, _Append):
+                    append[attr] = value.value
+                elif isinstance(value, _Prepend):
+                    prepend[attr] = value.value
+            else:
+                set[attr] = value
+        return cls(
+            set=set,
+            increment=increment,
+            append=append,
+            prepend=prepend,
+            delete=delete,
+        )
+
 
 class _UpdateOperation:
     pass
@@ -344,21 +371,11 @@ class Base(Generic[ItemT]):
         if not key:
             msg = f"invalid key '{key}'"
             raise ValueError(msg)
+        if not updates:
+            msg = "no updates provided"
+            raise ValueError(msg)
 
-        payload = _UpdatePayload()
-        for attr, value in updates.items():
-            if isinstance(value, _UpdateOperation):
-                if isinstance(value, _Trim):
-                    payload.delete.append(attr)
-                elif isinstance(value, _Increment):
-                    payload.increment[attr] = value.value
-                elif isinstance(value, _Append):
-                    payload.append[attr] = value.value
-                elif isinstance(value, _Prepend):
-                    payload.prepend[attr] = value.value
-            else:
-                payload.set[attr] = value
-
+        payload = _UpdatePayload.from_updates_mapping(updates)
         payload.set = self._insert_expires_attr(
             payload.set,
             expire_in=expire_in,
@@ -366,7 +383,7 @@ class Base(Generic[ItemT]):
         )
 
         key = quote(key, safe="")
-        response = self._client.patch(f"/items/{key}", json=payload)
+        response = self._client.patch(f"/items/{key}", json=payload.model_dump())
         if response.status_code == HTTPStatus.NOT_FOUND:
             raise ItemNotFoundError(key)
 
