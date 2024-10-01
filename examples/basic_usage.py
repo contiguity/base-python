@@ -36,7 +36,7 @@ print_result("Update", update_result)
 
 # Fetch items
 try:
-    fetch_result = db.fetch({"age": {"$gt": 25}}, limit=10)
+    fetch_result = db.query({"age": {"$gt": 25}}, limit=10)
     print_result("Fetch", fetch_result)
 except Exception as exc:
     print(f"Fetch operation failed: {exc}")
@@ -45,5 +45,5 @@ except Exception as exc:
 delete_result = db.delete("jane-doe-py")
 
 # Delete everything
-for item in db.fetch().items:
+for item in db.query().items:
     db.delete(str(item["key"]))
