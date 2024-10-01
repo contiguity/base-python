@@ -43,3 +43,7 @@ except Exception as exc:
 
 # Delete an item
 delete_result = db.delete("jane-doe-py")
+
+# Delete everything
+for item in db.fetch().items:
+    db.delete(str(item["key"]))
