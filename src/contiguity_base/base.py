@@ -175,7 +175,7 @@ class Contiguity:
     def __init__(self, api_key: str, project_id: str, debug: bool = False):
         self.api_key = api_key
         self.project_id = project_id
-        self.base_url = "https://base.api.contiguity.co/v1"
+        self.base_url = "https://api.base.contiguity.co/v1"
         self.debug = debug
 
     def Base(self, name: str) -> Base:
