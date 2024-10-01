@@ -24,7 +24,7 @@ from pydantic import JsonValue as DataType
 from typing_extensions import deprecated
 
 from contiguity_base._auth import get_base_token, get_project_id
-from contiguity_base._client import Client
+from contiguity_base._client import ApiClient
 
 if TYPE_CHECKING:
     from httpx import Response as HttpxResponse
@@ -182,7 +182,7 @@ class Base(Generic[ItemT]):
         self.json_encoder = json_encoder
         self.json_decoder = json_decoder
         self.util = _Updates()
-        self._client = Client(
+        self._client = ApiClient(
             base_url=f"https://{self.host}/{api_version}/{self.project_id}/{self.name}",
             api_key=self.base_token,
             timeout=300,

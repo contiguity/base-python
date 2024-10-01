@@ -6,9 +6,9 @@ from httpx import Client as HttpxClient
 from contiguity_base._auth import get_contiguity_token
 
 
-class Client(HttpxClient):
+class ApiClient(HttpxClient):
     def __init__(
-        self: Client,
+        self: ApiClient,
         *,
         base_url: str = "https://api.contiguity.co",
         api_key: str | None = None,
@@ -26,9 +26,9 @@ class Client(HttpxClient):
         )
 
 
-class AsyncClient(HttpxAsyncClient):
+class AsyncApiClient(HttpxAsyncClient):
     def __init__(
-        self: AsyncClient,
+        self: AsyncApiClient,
         *,
         base_url: str = "https://api.contiguity.co",
         api_key: str | None = None,
