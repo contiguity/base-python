@@ -1,6 +1,8 @@
 # TODO @lemonyte: todo list. # noqa: TD003, FIX002
 # - [ ] new docstrings
 # - [ ] proper tests
+# - [ ] support models for queries
+# - [ ] examples
 # - [ ] add async
 # - [ ] add drive support
 # - [ ] merge into main sdk
@@ -29,7 +31,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 TimestampType = Union[int, datetime]
-QueryType = Union[DataType, list[DataType]]
+QueryType = Mapping[str, DataType]
 
 ItemType = Union[Mapping, BaseModel]
 ItemT = TypeVar("ItemT", bound=ItemType)
@@ -341,9 +343,7 @@ class Base(Generic[ItemT]):
 
     def fetch(
         self: Self,
-        query: QueryType | None = None,
-        /,
-        *,
+        *queries: QueryType,
         limit: int = 1000,
         last: str | None = None,
     ) -> FetchResponse[ItemT]:
@@ -353,18 +353,21 @@ class Base(Generic[ItemT]):
 
         payload = {
             "limit": limit,
-            "last": last,
+            "last_key": last,
         }
 
-        if query:
-            payload["query"] = query if isinstance(query, (list, tuple)) else [query]
+        if queries:
+            payload["query"] = queries
 
         response = self._client.post("/query", json=payload)
         try:
             response.raise_for_status()
         except HTTPStatusError as exc:
             raise ApiError(exc.response.text) from exc
-        return FetchResponse.model_validate_json(response.content)
+        fetch_response = FetchResponse[ItemT].model_validate_json(response.content)
+        # HACK: Pydantic doesn't validate list[ItemT] properly. # noqa: FIX004
+        fetch_response.items = TypeAdapter(list[self.item_type]).validate_python(fetch_response.items)
+        return fetch_response
 
     def update(
         self: Self,
