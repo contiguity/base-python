@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar, Union, overload
 from urllib.parse import quote
 from warnings import warn
 
+from httpx import HTTPStatusError
 from pydantic import BaseModel, TypeAdapter
 from pydantic import JsonValue as DataType
 from typing_extensions import deprecated
@@ -204,7 +205,10 @@ class Base(Generic[ItemT]):
         )
 
     def _response_as_item_types(self: Self, response: HttpxResponse) -> Sequence[ItemT]:
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as exc:
+            raise ApiError(exc.response.text) from exc
         if issubclass(self.item_type, BaseModel):
             return TypeAdapter(list[self.item_type]).validate_json(response.content)
         # TODO @lemonyte: support TypedDict and parameterized generics. # noqa: TD003, FIX002
@@ -212,7 +216,7 @@ class Base(Generic[ItemT]):
             isinstance(item, self.item_type) for item in data
         ):
             return data
-        msg = f"failed to convert data to item type {self.item_type}"
+        msg = f"failed to convert data to item type {self.item_type}\n\t{data}"
         raise ValueError(msg)
 
     def _insert_expires_attr(
@@ -271,7 +275,7 @@ class Base(Generic[ItemT]):
             raise ApiError(msg)
         return returned_item[0]
 
-    def delete(self: Self, key: str, /, *, ignore_missing: bool = False) -> None:
+    def delete(self: Self, key: str, /) -> None:
         """Delete an item from the Base."""
         if not key:
             msg = f"invalid key '{key}'"
@@ -279,9 +283,10 @@ class Base(Generic[ItemT]):
 
         key = quote(key, safe="")
         response = self._client.delete(f"/items/{key}")
-        if response.status_code == HTTPStatus.NOT_FOUND and not ignore_missing:
-            raise ItemNotFoundError(key)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as exc:
+            raise ApiError(exc.response.text) from exc
 
     def insert(
         self: Self,
@@ -353,6 +358,10 @@ class Base(Generic[ItemT]):
             payload["query"] = query if isinstance(query, (list, tuple)) else [query]
 
         response = self._client.post("/query", json=payload)
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as exc:
+            raise ApiError(exc.response.text) from exc
         return FetchResponse.model_validate_json(response.content)
 
     def update(
