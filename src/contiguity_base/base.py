@@ -330,7 +330,7 @@ class Base(Generic[ItemT]):
         response = self._client.put("/items", json={"items": item_dicts})
         return self._response_as_item_types(response)
 
-    @deprecated("This method will be removed in the future. You can pass multiple items to `put`.")
+    @deprecated("This method will be removed in a future release. You can pass multiple items to `put`.")
     def put_many(
         self: Self,
         items: Sequence[ItemT],
@@ -378,7 +378,7 @@ class Base(Generic[ItemT]):
             raise ApiError(msg)
         return returned_item[0]
 
-    def fetch(
+    def query(
         self: Self,
         *queries: QueryType,
         limit: int = 1000,
@@ -405,3 +405,12 @@ class Base(Generic[ItemT]):
         # HACK: Pydantic doesn't validate list[ItemT] properly. # noqa: FIX004
         fetch_response.items = TypeAdapter(list[self.item_type]).validate_python(fetch_response.items)
         return fetch_response
+
+    @deprecated("This method has been renamed to `query` and will be removed in a future release.")
+    def fetch(
+        self: Self,
+        *queries: QueryType,
+        limit: int = 1000,
+        last: str | None = None,
+    ) -> FetchResponse[ItemT]:
+        return self.query(*queries, limit=limit, last=last)
