@@ -253,7 +253,7 @@ class Base(Generic[ItemT]):
     @overload
     def get(self: Self, key: str, default: DefaultItemT, /) -> ItemT | DefaultItemT: ...
 
-    def get(self: Self, key: str, default: DefaultItemT | _Unset = _UNSET, /) -> ItemT | DefaultItemT | None:
+    def get(self: Self, key: str, default: ItemT | DefaultItemT | _Unset = _UNSET, /) -> ItemT | DefaultItemT | None:
         if not key:
             msg = f"invalid key '{key}'"
             raise ValueError(msg)
@@ -334,7 +334,7 @@ class Base(Generic[ItemT]):
         *,
         expire_in: int | None = None,
         expire_at: TimestampType | None = None,
-    ) -> ItemT | Sequence[ItemT]:
+    ) -> Sequence[ItemT]:
         return self.put(*items, expire_in=expire_in, expire_at=expire_at)
 
     def fetch(
