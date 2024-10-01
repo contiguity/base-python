@@ -318,6 +318,8 @@ class Base(Generic[ItemT]):
         `key` could be provided as function argument or a field in the data dict.
         If `key` is not provided, the server will generate a random 12 chars key.
         """
+        if not items:
+            return []
         if len(items) > self.PUT_LIMIT:
             msg = f"cannot put more than {self.PUT_LIMIT} items at a time"
             raise ValueError(msg)
