@@ -6,6 +6,10 @@ from httpx import Client as HttpxClient
 from contiguity_base._auth import get_contiguity_token
 
 
+class ApiError(Exception):
+    pass
+
+
 class ApiClient(HttpxClient):
     def __init__(
         self: ApiClient,

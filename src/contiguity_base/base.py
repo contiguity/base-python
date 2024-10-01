@@ -1,7 +1,4 @@
-# ruff: noqa: TD003, FIX002, ERA001, T201
-# Remove above ignores when issues are fixed.
-# TODO @lemonyte: todo list.
-# - [ ] custom json encoder support
+# TODO @lemonyte: todo list. # noqa: TD003, FIX002
 # - [ ] new docstrings
 # - [ ] proper tests
 # - [ ] add async
@@ -19,12 +16,12 @@ from typing import TYPE_CHECKING, Generic, TypeVar, Union, overload
 from urllib.parse import quote
 from warnings import warn
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from pydantic import JsonValue as DataType
 from typing_extensions import deprecated
 
 from contiguity_base._auth import get_base_token, get_project_id
-from contiguity_base._client import ApiClient
+from contiguity_base._client import ApiClient, ApiError
 
 if TYPE_CHECKING:
     from httpx import Response as HttpxResponse
@@ -33,12 +30,9 @@ if TYPE_CHECKING:
 TimestampType = Union[int, datetime]
 QueryType = Union[DataType, list[DataType]]
 
-ItemType = Union[Mapping[str, DataType], BaseModel]
+ItemType = Union[Mapping, BaseModel]
 ItemT = TypeVar("ItemT", bound=ItemType)
-DefaultItemT = TypeVar("DefaultItemT", bound=ItemType)
-
-ModelT = TypeVar("ModelT", bound=BaseModel)
-DataT = TypeVar("DataT", bound=DataType)
+DefaultItemT = TypeVar("DefaultItemT")
 
 
 class _Unset:
@@ -52,11 +46,11 @@ class BaseItem(BaseModel):
     key: str
 
 
-class ItemConflictError(Exception):
+class ItemConflictError(ApiError):
     pass
 
 
-class ItemNotFoundError(Exception):
+class ItemNotFoundError(ApiError):
     def __init__(self, key: str, *args: object) -> None:
         super().__init__(f"key '{key}' not found", *args)
 
@@ -67,17 +61,20 @@ class FetchResponse(BaseModel, Generic[ItemT]):
     items: list[ItemT] = []
 
 
-class _UpdateOperation:
-    def __init__(self: _UpdateOperation) -> None:
-        self.value = None
+class _UpdatePayload(BaseModel):
+    set: dict[str, DataType] = {}
+    increment: dict[str, int] = {}
+    append: dict[str, Sequence[DataType]] = {}
+    prepend: dict[str, Sequence[DataType]] = {}
+    delete: list[str] = []
 
-    def as_dict(self: _UpdateOperation) -> dict[str, DataType]:
-        return {"__op": self.__class__.__name__.lower().replace("_", ""), "value": self.value}
+
+class _UpdateOperation:
+    pass
 
 
 class _Trim(_UpdateOperation):
-    def as_dict(self: _UpdateOperation) -> dict[str, DataType]:
-        return {"__op": "trim"}
+    pass
 
 
 class _Increment(_UpdateOperation):
@@ -87,19 +84,14 @@ class _Increment(_UpdateOperation):
 
 class _Append(_UpdateOperation):
     def __init__(self: _Append, value: DataType, /) -> None:
-        self.value = value
-        # TODO @lemonyte: The API does not support multi-value append and prepend yet.
-        # Uncomment this here and in _Prepend when it does.
-        # if not isinstance(value, Sequence):
-        #     # Extra type hint because type checkers can be stupid sometimes.
-        #     self.value: DataType = [value]
+        if isinstance(value, (list, tuple)):
+            self.value = value
+        else:
+            self.value = [value]
 
 
-class _Prepend(_UpdateOperation):
-    def __init__(self: _Prepend, value: DataType, /) -> None:
-        self.value = value
-        # if not isinstance(value, Sequence):
-        #     self.value: DataType = [value]
+class _Prepend(_Append):
+    pass
 
 
 class _Updates:
@@ -130,12 +122,11 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping[str, DataType],
+        item_type: type[ItemT] = Mapping,
         base_token: str | None = None,
         project_id: str | None = None,
         host: str | None = None,
         api_version: str = "v1",
-        json_encoder: type[json.JSONEncoder] = json.JSONEncoder,
         json_decoder: type[json.JSONDecoder] = json.JSONDecoder,
     ) -> None: ...
 
@@ -146,12 +137,11 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping[str, DataType],
+        item_type: type[ItemT] = Mapping,
         project_key: str | None = None,
         project_id: str | None = None,
         host: str | None = None,
         api_version: str = "v1",
-        json_encoder: type[json.JSONEncoder] = json.JSONEncoder,
         json_decoder: type[json.JSONDecoder] = json.JSONDecoder,
     ) -> None: ...
 
@@ -160,14 +150,13 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping[str, DataType],
+        item_type: type[ItemT] = Mapping,
         base_token: str | None = None,
         project_key: str | None = None,  # Deprecated.
         project_id: str | None = None,
         host: str | None = None,
         api_version: str = "v1",
-        json_encoder: type[json.JSONEncoder] = json.JSONEncoder,
-        json_decoder: type[json.JSONDecoder] = json.JSONDecoder,
+        json_decoder: type[json.JSONDecoder] = json.JSONDecoder,  # Only used when item_type is not a Pydantic model.
     ) -> None:
         if not name:
             msg = f"invalid name '{name}'"
@@ -179,7 +168,6 @@ class Base(Generic[ItemT]):
         self.project_id = project_id or get_project_id()
         self.host = host or os.getenv("CONTIGUITY_BASE_HOST") or "api.base.contiguity.co"
         self.api_version = api_version
-        self.json_encoder = json_encoder
         self.json_decoder = json_decoder
         self.util = _Updates()
         self._client = ApiClient(
@@ -188,21 +176,17 @@ class Base(Generic[ItemT]):
             timeout=300,
         )
 
-    def _data_as_item_type(self: Self, data: Mapping[str, DataType]) -> ItemT:
-        print("data:", data)
+    def _response_as_item_types(self: Self, response: HttpxResponse) -> Sequence[ItemT]:
+        response.raise_for_status()
         if issubclass(self.item_type, BaseModel):
-            return self.item_type.model_validate(data)
-        # TODO @lemonyte: support dicts as well as BaseModel subclasses.
-        # if isinstance(data, self.item_type.__args__[0]):
-        #     return data
+            return TypeAdapter(list[self.item_type]).validate_json(response.content)
+        # TODO @lemonyte: support TypedDict and parameterized generics. # noqa: TD003, FIX002
+        if isinstance((data := response.json(cls=self.json_decoder)), list) and all(
+            isinstance(item, self.item_type) for item in data
+        ):
+            return data
         msg = f"failed to convert data to item type {self.item_type}"
         raise ValueError(msg)
-
-    def _response_as_item_type(self: Self, response: HttpxResponse) -> ItemT | Sequence[ItemT]:
-        data = response.raise_for_status().json(cls=self.json_decoder)
-        if isinstance(data, Sequence):
-            return [self._data_as_item_type(item) for item in data]
-        return self._data_as_item_type(data)
 
     def _insert_expires_attr(
         self: Self,
@@ -218,13 +202,10 @@ class Base(Generic[ItemT]):
 
         if not expire_in and not expire_at:
             return item_dict
-
         if expire_in:
             expire_at = datetime.now(tz=timezone.utc) + timedelta(seconds=expire_in)
-
         if isinstance(expire_at, datetime):
             expire_at = int(expire_at.replace(microsecond=0).timestamp())
-
         if not isinstance(expire_at, int):
             msg = "expire_at should be a datetime or int"
             raise TypeError(msg)
@@ -236,6 +217,9 @@ class Base(Generic[ItemT]):
     def get(self: Self, key: str, /) -> ItemT | None: ...
 
     @overload
+    def get(self: Self, key: str, default: ItemT, /) -> ItemT: ...
+
+    @overload
     def get(self: Self, key: str, default: DefaultItemT, /) -> ItemT | DefaultItemT: ...
 
     def get(self: Self, key: str, default: DefaultItemT | _Unset = _UNSET, /) -> ItemT | DefaultItemT | None:
@@ -245,7 +229,6 @@ class Base(Generic[ItemT]):
 
         key = quote(key, safe="")
         response = self._client.get(f"/items/{key}")
-
         if response.status_code == HTTPStatus.NOT_FOUND:
             if not isinstance(default, _Unset):
                 return default
@@ -255,17 +238,11 @@ class Base(Generic[ItemT]):
             )
             warn(DeprecationWarning(msg), stacklevel=2)
             return None
-            # raise ItemNotFoundError(key)
 
-        # TODO @lemonyte: due to the API returning both a single item and a list of items,
-        # we need to check the response type.
-        # Remove when the API is fixed to always return a list of items.
-        returned_item = self._response_as_item_type(response)
-        if isinstance(returned_item, Sequence):
-            # this shouldn't happen, it's just here until the API is fixed
-            msg = "expected a single item, got a list of items"
-            raise TypeError(msg)
-        return returned_item
+        if not (returned_item := self._response_as_item_types(response)):
+            msg = "expected a single item, got an empty response"
+            raise ApiError(msg)
+        return returned_item[0]
 
     def delete(self: Self, key: str, /, *, ignore_missing: bool = False) -> None:
         """Delete an item from the Base."""
@@ -294,22 +271,17 @@ class Base(Generic[ItemT]):
             msg = f"item with key '{item_dict.get('key')}' already exists"
             raise ItemConflictError(msg)
 
-        # TODO @lemonyte: due to the API returning both a single item and a list of items,
-        # we need to check the response type.
-        # Remove when the API is fixed to always return a list of items.
-        returned_item = self._response_as_item_type(response)
-        if isinstance(returned_item, Sequence):
-            # this shouldn't happen, it's just here until the API is fixed
-            msg = "expected a single item, got a list of items"
-            raise TypeError(msg)
-        return returned_item
+        if not (returned_item := self._response_as_item_types(response)):
+            msg = "expected a single item, got an empty response"
+            raise ApiError(msg)
+        return returned_item[0]
 
     def put(
         self: Self,
         *items: ItemT,
         expire_in: int | None = None,
         expire_at: TimestampType | None = None,
-    ) -> ItemT | Sequence[ItemT]:
+    ) -> Sequence[ItemT]:
         """store (put) an item in the database. Overrides an item if key already exists.
         `key` could be provided as function argument or a field in the data dict.
         If `key` is not provided, the server will generate a random 12 chars key.
@@ -320,7 +292,7 @@ class Base(Generic[ItemT]):
 
         item_dicts = [self._insert_expires_attr(item, expire_in=expire_in, expire_at=expire_at) for item in items]
         response = self._client.put("/items", json={"items": item_dicts})
-        return self._response_as_item_type(response)
+        return self._response_as_item_types(response)
 
     @deprecated("This method will be removed in the future. You can pass multiple items to `put`.")
     def put_many(
@@ -351,15 +323,10 @@ class Base(Generic[ItemT]):
         }
 
         if query:
-            payload["query"] = query if isinstance(query, list) else [query]
+            payload["query"] = query if isinstance(query, (list, tuple)) else [query]
 
         response = self._client.post("/query", json=payload)
-        response_json = response.raise_for_status().json(cls=self.json_decoder)
-        return FetchResponse(
-            count=response_json.get("count", 0),
-            last_key=response_json.get("last", None),
-            items=[self._data_as_item_type(item) for item in response_json.get("items", [])],
-        )
+        return FetchResponse.model_validate_json(response.content)
 
     def update(
         self: Self,
@@ -378,39 +345,32 @@ class Base(Generic[ItemT]):
             msg = f"invalid key '{key}'"
             raise ValueError(msg)
 
-        payload = {
-            "updates": {
-                field: (value.as_dict() if isinstance(value, _UpdateOperation) else {"__op": "set", "value": value})
-                for field, value in updates.items()
-            },
-        }
-
-        # payload = self._insert_expires_attr(
-        #     payload,
-        #     expire_in=expire_in,
-        #     expire_at=expire_at,
-        # )
-
-        # TODO @lemonyte: Remove when the API adds support for __expires.
-        if expire_in is not None:
-            payload["expireIn"] = expire_in  # type: ignore[assignment]
-        if expire_at is not None:
-            if isinstance(expire_at, datetime):
-                payload["expireAt"] = expire_at.isoformat()  # type: ignore[assignment]
+        payload = _UpdatePayload()
+        for attr, value in updates.items():
+            if isinstance(value, _UpdateOperation):
+                if isinstance(value, _Trim):
+                    payload.delete.append(attr)
+                elif isinstance(value, _Increment):
+                    payload.increment[attr] = value.value
+                elif isinstance(value, _Append):
+                    payload.append[attr] = value.value
+                elif isinstance(value, _Prepend):
+                    payload.prepend[attr] = value.value
             else:
-                payload["expireAt"] = expire_at  # type: ignore[assignment]
+                payload.set[attr] = value
+
+        payload.set = self._insert_expires_attr(
+            payload.set,
+            expire_in=expire_in,
+            expire_at=expire_at,
+        )
 
         key = quote(key, safe="")
         response = self._client.patch(f"/items/{key}", json=payload)
         if response.status_code == HTTPStatus.NOT_FOUND:
             raise ItemNotFoundError(key)
 
-        # TODO @lemonyte: due to the API returning both a single item and a list of items,
-        # we need to check the response type.
-        # Remove when the API is fixed to always return a list of items.
-        returned_item = self._response_as_item_type(response)
-        if isinstance(returned_item, Sequence):
-            # this shouldn't happen, it's just here until the API is fixed
-            msg = "expected a single item, got a list of items"
-            raise TypeError(msg)
-        return returned_item
+        if not (returned_item := self._response_as_item_types(response)):
+            msg = "expected a single item, got an empty response"
+            raise ApiError(msg)
+        return returned_item[0]
