@@ -341,34 +341,6 @@ class Base(Generic[ItemT]):
     ) -> Sequence[ItemT]:
         return self.put(*items, expire_in=expire_in, expire_at=expire_at)
 
-    def fetch(
-        self: Self,
-        *queries: QueryType,
-        limit: int = 1000,
-        last: str | None = None,
-    ) -> FetchResponse[ItemT]:
-        """fetch items from the database.
-        `query` is an optional filter or list of filters. Without filter, it will return the whole db.
-        """
-
-        payload = {
-            "limit": limit,
-            "last_key": last,
-        }
-
-        if queries:
-            payload["query"] = queries
-
-        response = self._client.post("/query", json=payload)
-        try:
-            response.raise_for_status()
-        except HTTPStatusError as exc:
-            raise ApiError(exc.response.text) from exc
-        fetch_response = FetchResponse[ItemT].model_validate_json(response.content)
-        # HACK: Pydantic doesn't validate list[ItemT] properly. # noqa: FIX004
-        fetch_response.items = TypeAdapter(list[self.item_type]).validate_python(fetch_response.items)
-        return fetch_response
-
     def update(
         self: Self,
         updates: Mapping[str, DataType | _UpdateOperation],
@@ -405,3 +377,31 @@ class Base(Generic[ItemT]):
             msg = "expected a single item, got an empty response"
             raise ApiError(msg)
         return returned_item[0]
+
+    def fetch(
+        self: Self,
+        *queries: QueryType,
+        limit: int = 1000,
+        last: str | None = None,
+    ) -> FetchResponse[ItemT]:
+        """fetch items from the database.
+        `query` is an optional filter or list of filters. Without filter, it will return the whole db.
+        """
+
+        payload = {
+            "limit": limit,
+            "last_key": last,
+        }
+
+        if queries:
+            payload["query"] = queries
+
+        response = self._client.post("/query", json=payload)
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as exc:
+            raise ApiError(exc.response.text) from exc
+        fetch_response = FetchResponse[ItemT].model_validate_json(response.content)
+        # HACK: Pydantic doesn't validate list[ItemT] properly. # noqa: FIX004
+        fetch_response.items = TypeAdapter(list[self.item_type]).validate_python(fetch_response.items)
+        return fetch_response
