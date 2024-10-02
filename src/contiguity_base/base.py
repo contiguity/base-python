@@ -153,7 +153,7 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping,
+        item_type: type[ItemT] = Mapping[str, DataType],
         base_token: str | None = None,
         project_id: str | None = None,
         host: str | None = None,
@@ -168,7 +168,7 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping,
+        item_type: type[ItemT] = Mapping[str, DataType],
         project_key: str | None = None,
         project_id: str | None = None,
         host: str | None = None,
@@ -181,7 +181,7 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping,
+        item_type: type[ItemT] = Mapping[str, DataType],
         base_token: str | None = None,
         project_key: str | None = None,  # Deprecated.
         project_id: str | None = None,
@@ -207,20 +207,19 @@ class Base(Generic[ItemT]):
             timeout=300,
         )
 
+    def _response_as_item_type(self: Self, response: HttpxResponse) -> ItemT:
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as exc:
+            raise ApiError(exc.response.text) from exc
+        return TypeAdapter(self.item_type).validate_json(response.content)
+
     def _response_as_item_types(self: Self, response: HttpxResponse) -> Sequence[ItemT]:
         try:
             response.raise_for_status()
         except HTTPStatusError as exc:
             raise ApiError(exc.response.text) from exc
-        if issubclass(self.item_type, BaseModel):
-            return TypeAdapter(list[self.item_type]).validate_json(response.content)
-        # TODO @lemonyte: support TypedDict and parameterized generics. # noqa: TD003, FIX002
-        if isinstance((data := response.json(cls=self.json_decoder)), list) and all(
-            isinstance(item, self.item_type) for item in data
-        ):
-            return data
-        msg = f"failed to convert data to item type {self.item_type}\n\t{data}"
-        raise ValueError(msg)
+        return TypeAdapter(list[self.item_type]).validate_json(response.content)
 
     def _insert_expires_attr(
         self: Self,
@@ -273,10 +272,7 @@ class Base(Generic[ItemT]):
             warn(DeprecationWarning(msg), stacklevel=2)
             return None
 
-        if not (returned_item := self._response_as_item_types(response)):
-            msg = "expected a single item, got an empty response"
-            raise ApiError(msg)
-        return returned_item[0]
+        return self._response_as_item_type(response)
 
     def delete(self: Self, key: str, /) -> None:
         """Delete an item from the Base."""
@@ -370,14 +366,11 @@ class Base(Generic[ItemT]):
         )
 
         key = quote(key, safe="")
-        response = self._client.patch(f"/items/{key}", json=payload.model_dump())
+        response = self._client.patch(f"/items/{key}", json={"updates": payload.model_dump()})
         if response.status_code == HTTPStatus.NOT_FOUND:
             raise ItemNotFoundError(key)
 
-        if not (returned_item := self._response_as_item_types(response)):
-            msg = "expected a single item, got an empty response"
-            raise ApiError(msg)
-        return returned_item[0]
+        return self._response_as_item_type(response)
 
     def query(
         self: Self,
