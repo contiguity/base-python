@@ -84,10 +84,11 @@ class _UpdatePayload(BaseModel):
                     delete.append(attr)
                 elif isinstance(value, _Increment):
                     increment[attr] = value.value
-                elif isinstance(value, _Append):
-                    append[attr] = value.value
+                # Prepend must be checked before Append because it's a subclass of Append.
                 elif isinstance(value, _Prepend):
                     prepend[attr] = value.value
+                elif isinstance(value, _Append):
+                    append[attr] = value.value
             else:
                 set[attr] = value
         return cls(
