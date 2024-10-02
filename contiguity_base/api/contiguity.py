@@ -142,6 +142,3 @@ class Contiguity(BaseContiguity):
     def __init__(self, api_key: str, project_id: str, debug: bool = False):
         super().__init__(api_key, project_id, debug)
         self._client = Client()
-
-contiguity = Contiguity("478b73847b8b1bdbcec9aa8eaa1a1c8ec10f62971ab966ffdee63298c831ee5c", "4d49083ccea0a670144fe679d9d736f1")
-print(contiguity.connect_to_base("users"))
