@@ -49,6 +49,7 @@ version = {attr = "contiguity_base.__version__"}
 dev-dependencies = [
     "pre-commit~=3.8.0",
     "pytest~=8.3.3",
+    "python-dotenv~=1.0.1",
 ]
 
 [tool.ruff]
