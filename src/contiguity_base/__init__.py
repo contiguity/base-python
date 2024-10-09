@@ -1,10 +1,10 @@
-from .base import Base, BaseItem, FetchResponse, ItemConflictError, ItemNotFoundError
+from .base import Base, BaseItem, ItemConflictError, ItemNotFoundError, QueryResponse
 
 __all__ = (
     "Base",
     "BaseItem",
-    "FetchResponse",
     "ItemConflictError",
     "ItemNotFoundError",
+    "QueryResponse",
 )
 __version__ = "1.0.0"

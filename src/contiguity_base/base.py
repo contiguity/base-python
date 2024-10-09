@@ -59,7 +59,7 @@ class ItemNotFoundError(ApiError):
         super().__init__(f"key '{key}' not found", *args)
 
 
-class FetchResponse(BaseModel, Generic[ItemT]):
+class QueryResponse(BaseModel, Generic[ItemT]):
     count: int = 0
     last_key: Union[str, None] = None  # noqa: UP007 Pydantic doesn't support `X | Y` syntax in Python 3.9.
     items: Sequence[ItemT] = []
@@ -398,7 +398,7 @@ class Base(Generic[ItemT]):
         *queries: QueryType,
         limit: int = 1000,
         last: str | None = None,
-    ) -> FetchResponse[ItemT]:
+    ) -> QueryResponse[ItemT]:
         """fetch items from the database.
         `query` is an optional filter or list of filters. Without filter, it will return the whole db.
         """
@@ -416,12 +416,11 @@ class Base(Generic[ItemT]):
             response.raise_for_status()
         except HTTPStatusError as exc:
             raise ApiError(exc.response.text) from exc
+        query_response = QueryResponse[ItemT].model_validate_json(response.content)
         if self.item_type:
-            fetch_response = FetchResponse[ItemT].model_validate_json(response.content)
             # HACK: Pydantic model_validate_json doesn't validate Sequence[ItemT] properly. # noqa: FIX004
-            fetch_response.items = TypeAdapter(Sequence[self.item_type]).validate_python(fetch_response.items)
-            return fetch_response
-        return response.json(cls=self.json_decoder)
+            query_response.items = TypeAdapter(Sequence[self.item_type]).validate_python(query_response.items)
+        return query_response
 
     @deprecated("This method has been renamed to `query` and will be removed in a future release.")
     def fetch(
@@ -429,5 +428,5 @@ class Base(Generic[ItemT]):
         *queries: QueryType,
         limit: int = 1000,
         last: str | None = None,
-    ) -> FetchResponse[ItemT]:
+    ) -> QueryResponse[ItemT]:
         return self.query(*queries, limit=limit, last=last)
