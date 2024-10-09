@@ -15,7 +15,7 @@ import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union, overload
 from urllib.parse import quote
 from warnings import warn
 
@@ -208,22 +208,38 @@ class Base(Generic[ItemT]):
             timeout=300,
         )
 
-    def _response_as_item_type(self: Self, response: HttpxResponse) -> ItemT:
-        try:
-            response.raise_for_status()
-        except HTTPStatusError as exc:
-            raise ApiError(exc.response.text) from exc
-        if self.item_type:
-            return TypeAdapter(self.item_type).validate_json(response.content)
-        return response.json(cls=self.json_decoder)
+    @overload
+    def _response_as_item_type(
+        self: Self,
+        response: HttpxResponse,
+        /,
+        *,
+        sequence: Literal[False] = False,
+    ) -> ItemT: ...
+    @overload
+    def _response_as_item_type(
+        self: Self,
+        response: HttpxResponse,
+        /,
+        *,
+        sequence: Literal[True] = True,
+    ) -> Sequence[ItemT]: ...
 
-    def _response_as_item_types(self: Self, response: HttpxResponse) -> Sequence[ItemT]:
+    def _response_as_item_type(
+        self: Self,
+        response: HttpxResponse,
+        /,
+        *,
+        sequence: bool = False,
+    ) -> ItemT | Sequence[ItemT]:
         try:
             response.raise_for_status()
         except HTTPStatusError as exc:
             raise ApiError(exc.response.text) from exc
         if self.item_type:
-            return TypeAdapter(list[self.item_type]).validate_json(response.content)
+            if sequence:
+                return TypeAdapter(Sequence[self.item_type]).validate_json(response.content)
+            return TypeAdapter(self.item_type).validate_json(response.content)
         return response.json(cls=self.json_decoder)
 
     def _insert_expires_attr(
@@ -280,7 +296,7 @@ class Base(Generic[ItemT]):
             warn(DeprecationWarning(msg), stacklevel=2)
             return None
 
-        return self._response_as_item_type(response)
+        return self._response_as_item_type(response, sequence=False)
 
     def delete(self: Self, key: str, /) -> None:
         """Delete an item from the Base."""
@@ -310,7 +326,7 @@ class Base(Generic[ItemT]):
             msg = f"item with key '{item_dict.get('key')}' already exists"
             raise ItemConflictError(msg)
 
-        if not (returned_item := self._response_as_item_types(response)):
+        if not (returned_item := self._response_as_item_type(response, sequence=True)):
             msg = "expected a single item, got an empty response"
             raise ApiError(msg)
         return returned_item[0]
@@ -333,7 +349,7 @@ class Base(Generic[ItemT]):
 
         item_dicts = [self._insert_expires_attr(item, expire_in=expire_in, expire_at=expire_at) for item in items]
         response = self._client.put("/items", json={"items": item_dicts})
-        return self._response_as_item_types(response)
+        return self._response_as_item_type(response, sequence=True)
 
     @deprecated("This method will be removed in a future release. You can pass multiple items to `put`.")
     def put_many(
@@ -378,7 +394,7 @@ class Base(Generic[ItemT]):
         if response.status_code == HTTPStatus.NOT_FOUND:
             raise ItemNotFoundError(key)
 
-        return self._response_as_item_type(response)
+        return self._response_as_item_type(response, sequence=False)
 
     def query(
         self: Self,
@@ -405,7 +421,7 @@ class Base(Generic[ItemT]):
             raise ApiError(exc.response.text) from exc
         if self.item_type:
             fetch_response = FetchResponse[ItemT].model_validate_json(response.content)
-            # HACK: Pydantic doesn't validate list[ItemT] properly. # noqa: FIX004
+            # HACK: Pydantic model_validate_json doesn't validate Sequence[ItemT] properly. # noqa: FIX004
             fetch_response.items = TypeAdapter(Sequence[self.item_type]).validate_python(fetch_response.items)
             return fetch_response
         return response.json(cls=self.json_decoder)
