@@ -64,3 +64,4 @@ ignore = ["A", "D"]
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+reportUnnecessaryTypeIgnoreComment = true
