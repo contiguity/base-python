@@ -1,6 +1,7 @@
 # TODO @lemonyte: todo list. # noqa: TD003, FIX002
 # - [ ] new docstrings
-# - [ ] proper tests
+# - [ ] more tests
+# - [ ] support dataclasses
 # - [ ] support models for queries
 # - [ ] examples
 # - [ ] add async
@@ -14,7 +15,7 @@ import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Generic, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, overload
 from urllib.parse import quote
 from warnings import warn
 
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 TimestampType = Union[int, datetime]
 QueryType = Mapping[str, DataType]
 
-ItemType = Union[Mapping, BaseModel]
+ItemType = Union[Mapping[str, Any], BaseModel]
 ItemT = TypeVar("ItemT", bound=ItemType)
 DefaultItemT = TypeVar("DefaultItemT")
 
@@ -61,7 +62,7 @@ class ItemNotFoundError(ApiError):
 class FetchResponse(BaseModel, Generic[ItemT]):
     count: int = 0
     last_key: Union[str, None] = None  # noqa: UP007 Pydantic doesn't support `X | Y` syntax in Python 3.9.
-    items: list[ItemT] = []
+    items: Sequence[ItemT] = []
 
 
 class _UpdatePayload(BaseModel):
@@ -153,7 +154,7 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping[str, DataType],
+        item_type: type[ItemT] | None = None,
         base_token: str | None = None,
         project_id: str | None = None,
         host: str | None = None,
@@ -168,7 +169,7 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping[str, DataType],
+        item_type: type[ItemT] | None = None,
         project_key: str | None = None,
         project_id: str | None = None,
         host: str | None = None,
@@ -181,7 +182,7 @@ class Base(Generic[ItemT]):
         name: str,
         /,
         *,
-        item_type: type[ItemT] = Mapping[str, DataType],
+        item_type: type[ItemT] | None = None,
         base_token: str | None = None,
         project_key: str | None = None,  # Deprecated.
         project_id: str | None = None,
@@ -212,14 +213,18 @@ class Base(Generic[ItemT]):
             response.raise_for_status()
         except HTTPStatusError as exc:
             raise ApiError(exc.response.text) from exc
-        return TypeAdapter(self.item_type).validate_json(response.content)
+        if self.item_type:
+            return TypeAdapter(self.item_type).validate_json(response.content)
+        return response.json(cls=self.json_decoder)
 
     def _response_as_item_types(self: Self, response: HttpxResponse) -> Sequence[ItemT]:
         try:
             response.raise_for_status()
         except HTTPStatusError as exc:
             raise ApiError(exc.response.text) from exc
-        return TypeAdapter(list[self.item_type]).validate_json(response.content)
+        if self.item_type:
+            return TypeAdapter(list[self.item_type]).validate_json(response.content)
+        return response.json(cls=self.json_decoder)
 
     def _insert_expires_attr(
         self: Self,
@@ -231,7 +236,10 @@ class Base(Generic[ItemT]):
             msg = "cannot use both expire_in and expire_at"
             raise ValueError(msg)
 
-        item_dict = item.model_dump() if isinstance(item, BaseModel) else dict(item)
+        if isinstance(item, BaseModel):
+            item_dict = item.model_dump()
+        elif isinstance(item, Mapping):
+            item_dict = dict(item)
 
         if not expire_in and not expire_at:
             return item_dict
@@ -395,10 +403,12 @@ class Base(Generic[ItemT]):
             response.raise_for_status()
         except HTTPStatusError as exc:
             raise ApiError(exc.response.text) from exc
-        fetch_response = FetchResponse[ItemT].model_validate_json(response.content)
-        # HACK: Pydantic doesn't validate list[ItemT] properly. # noqa: FIX004
-        fetch_response.items = TypeAdapter(list[self.item_type]).validate_python(fetch_response.items)
-        return fetch_response
+        if self.item_type:
+            fetch_response = FetchResponse[ItemT].model_validate_json(response.content)
+            # HACK: Pydantic doesn't validate list[ItemT] properly. # noqa: FIX004
+            fetch_response.items = TypeAdapter(Sequence[self.item_type]).validate_python(fetch_response.items)
+            return fetch_response
+        return response.json(cls=self.json_decoder)
 
     @deprecated("This method has been renamed to `query` and will be removed in a future release.")
     def fetch(
