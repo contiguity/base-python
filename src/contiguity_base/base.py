@@ -252,10 +252,7 @@ class Base(Generic[ItemT]):
             msg = "cannot use both expire_in and expire_at"
             raise ValueError(msg)
 
-        if isinstance(item, BaseModel):
-            item_dict = item.model_dump()
-        elif isinstance(item, Mapping):
-            item_dict = dict(item)
+        item_dict = item.model_dump() if isinstance(item, BaseModel) else dict(item)
 
         if not expire_in and not expire_at:
             return item_dict
