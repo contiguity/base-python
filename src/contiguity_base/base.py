@@ -1,6 +1,6 @@
 # TODO @lemonyte: todo list. # noqa: TD003, FIX002
 # - [ ] new docstrings
-# - [ ] more tests
+# - [ ] test expiring items
 # - [ ] support dataclasses
 # - [ ] support models for queries
 # - [ ] examples
@@ -51,7 +51,8 @@ class BaseItem(BaseModel):
 
 
 class ItemConflictError(ApiError):
-    pass
+    def __init__(self, key: str, *args: object) -> None:
+        super().__init__(f"item with key '{key}' already exists", *args)
 
 
 class ItemNotFoundError(ApiError):
@@ -59,46 +60,15 @@ class ItemNotFoundError(ApiError):
         super().__init__(f"key '{key}' not found", *args)
 
 
+class InvalidKeyError(ValueError):
+    def __init__(self, key: str, *args: object) -> None:
+        super().__init__(f"invalid key '{key}'", *args)
+
+
 class QueryResponse(BaseModel, Generic[ItemT]):
     count: int = 0
     last_key: Union[str, None] = None  # noqa: UP007 Pydantic doesn't support `X | Y` syntax in Python 3.9.
     items: Sequence[ItemT] = []
-
-
-class _UpdatePayload(BaseModel):
-    set: dict[str, DataType] = {}
-    increment: dict[str, int] = {}
-    append: dict[str, Sequence[DataType]] = {}
-    prepend: dict[str, Sequence[DataType]] = {}
-    delete: list[str] = []
-
-    @classmethod
-    def from_updates_mapping(cls: type[Self], updates: Mapping[str, DataType | _UpdateOperation], /) -> Self:
-        set = {}
-        increment = {}
-        append = {}
-        prepend = {}
-        delete = []
-        for attr, value in updates.items():
-            if isinstance(value, _UpdateOperation):
-                if isinstance(value, _Trim):
-                    delete.append(attr)
-                elif isinstance(value, _Increment):
-                    increment[attr] = value.value
-                # Prepend must be checked before Append because it's a subclass of Append.
-                elif isinstance(value, _Prepend):
-                    prepend[attr] = value.value
-                elif isinstance(value, _Append):
-                    append[attr] = value.value
-            else:
-                set[attr] = value
-        return cls(
-            set=set,
-            increment=increment,
-            append=append,
-            prepend=prepend,
-            delete=delete,
-        )
 
 
 class _UpdateOperation:
@@ -142,6 +112,48 @@ class _Updates:
     @staticmethod
     def prepend(value: DataType, /) -> _Prepend:
         return _Prepend(value)
+
+
+class _UpdatePayload(BaseModel):
+    set: dict[str, DataType] = {}
+    increment: dict[str, int] = {}
+    append: dict[str, Sequence[DataType]] = {}
+    prepend: dict[str, Sequence[DataType]] = {}
+    delete: list[str] = []
+
+    @classmethod
+    def from_updates_mapping(cls: type[Self], updates: Mapping[str, DataType | _UpdateOperation], /) -> Self:
+        set = {}
+        increment = {}
+        append = {}
+        prepend = {}
+        delete = []
+        for attr, value in updates.items():
+            if isinstance(value, _UpdateOperation):
+                if isinstance(value, _Trim):
+                    delete.append(attr)
+                elif isinstance(value, _Increment):
+                    increment[attr] = value.value
+                # Prepend must be checked before Append because it's a subclass of Append.
+                elif isinstance(value, _Prepend):
+                    prepend[attr] = value.value
+                elif isinstance(value, _Append):
+                    append[attr] = value.value
+            else:
+                set[attr] = value
+        return cls(
+            set=set,
+            increment=increment,
+            append=append,
+            prepend=prepend,
+            delete=delete,
+        )
+
+
+def _check_key(key: str, /) -> str:
+    if not key:
+        raise InvalidKeyError(key)
+    return quote(key, safe="")
 
 
 class Base(Generic[ItemT]):
@@ -191,7 +203,7 @@ class Base(Generic[ItemT]):
         json_decoder: type[json.JSONDecoder] = json.JSONDecoder,  # Only used when item_type is not a Pydantic model.
     ) -> None:
         if not name:
-            msg = f"invalid name '{name}'"
+            msg = f"invalid Base name '{name}'"
             raise ValueError(msg)
 
         self.name = name
@@ -271,17 +283,19 @@ class Base(Generic[ItemT]):
     def get(self: Self, key: str, /) -> ItemT | None: ...
 
     @overload
-    def get(self: Self, key: str, default: ItemT, /) -> ItemT: ...
+    def get(self: Self, key: str, /, *, default: ItemT) -> ItemT: ...
 
     @overload
-    def get(self: Self, key: str, default: DefaultItemT, /) -> ItemT | DefaultItemT: ...
+    def get(self: Self, key: str, /, *, default: DefaultItemT) -> ItemT | DefaultItemT: ...
 
-    def get(self: Self, key: str, default: ItemT | DefaultItemT | _Unset = _UNSET, /) -> ItemT | DefaultItemT | None:
-        if not key:
-            msg = f"invalid key '{key}'"
-            raise ValueError(msg)
-
-        key = quote(key, safe="")
+    def get(
+        self: Self,
+        key: str,
+        /,
+        *,
+        default: ItemT | DefaultItemT | _Unset = _UNSET,
+    ) -> ItemT | DefaultItemT | None:
+        key = _check_key(key)
         response = self._client.get(f"/items/{key}")
         if response.status_code == HTTPStatus.NOT_FOUND:
             if not isinstance(default, _Unset):
@@ -297,11 +311,7 @@ class Base(Generic[ItemT]):
 
     def delete(self: Self, key: str, /) -> None:
         """Delete an item from the Base."""
-        if not key:
-            msg = f"invalid key '{key}'"
-            raise ValueError(msg)
-
-        key = quote(key, safe="")
+        key = _check_key(key)
         response = self._client.delete(f"/items/{key}")
         try:
             response.raise_for_status()
@@ -320,8 +330,7 @@ class Base(Generic[ItemT]):
         response = self._client.post("/items", json={"item": item_dict})
 
         if response.status_code == HTTPStatus.CONFLICT:
-            msg = f"item with key '{item_dict.get('key')}' already exists"
-            raise ItemConflictError(msg)
+            raise ItemConflictError(str(item_dict.get("key")))
 
         if not (returned_item := self._response_as_item_type(response, sequence=True)):
             msg = "expected a single item, got an empty response"
@@ -372,9 +381,7 @@ class Base(Generic[ItemT]):
         `updates` specifies the attribute names and values to update,add or remove
         `key` is the key of the item to be updated
         """
-        if not key:
-            msg = f"invalid key '{key}'"
-            raise ValueError(msg)
+        key = _check_key(key)
         if not updates:
             msg = "no updates provided"
             raise ValueError(msg)
@@ -386,7 +393,6 @@ class Base(Generic[ItemT]):
             expire_at=expire_at,
         )
 
-        key = quote(key, safe="")
         response = self._client.patch(f"/items/{key}", json={"updates": payload.model_dump()})
         if response.status_code == HTTPStatus.NOT_FOUND:
             raise ItemNotFoundError(key)
