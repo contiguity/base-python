@@ -1,49 +1,40 @@
-# ruff: noqa: T201, BLE001, ANN401
-from typing import Any
-
+# ruff: noqa: T201
 from contiguity_base import Base
 
-# Create a Base instance
-db = Base("randomBase9000")
+# Create a Base instance.
+db = Base("my-base")
 
+# Put an item with a specific key.
+put_result = db.put({"key": "foo", "value": "Hello world!"})
+print("Put result:", put_result)
 
-# Helper function to print results
-def print_result(operation: str, result: Any) -> None:
-    print(f"{operation} result: {result}")
-    if result is None:
-        print(f"Warning: {operation} operation failed!")
+# Put multiple items.
+put_result = db.put({"key": "bar", "value": "Bar"}, {"key": "baz", "value": "Baz"})
+print("Put many result:", put_result)
 
+# Insert an item with a specific key.
+insert_result = db.insert({"key": "john-doe", "name": "John Doe", "age": 30})
+print("Insert result:", insert_result)
 
-# Put an item with a specific key
-result1 = db.put({"key": "my-key-py", "value": "Hello world!"})
-print_result("Put", result1)
+# Insert an item with a specific key that expires in 1 hour.
+expiring_insert_result = db.insert({"key": "jane-doe", "name": "Jane Doe", "age": 28}, expire_in=3600)
+print("Insert with expiry result:", expiring_insert_result)
 
-# Insert an item with a specific key
-result2 = db.insert({"key": "john-doe-py", "name": "John Doe", "age": 30})
-print_result("Insert", result2)
+# Get an item using a key.
+get_result = db.get("foo")
+print("Get result:", get_result)
 
-# Insert an item with a specific key and expireIn
-result3 = db.insert({"key": "jane-doe-py", "name": "Jane Doe", "age": 28}, expire_in=3600)
-print_result("Insert with expireIn", result3)
+# Update an item.
+update_result = db.update({"age": db.util.increment(2), "name": "Mr. Doe"}, key="john-doe")
+print("Update result:", update_result)
 
-# Get an item
-get_result = db.get("john-doe-py")
-print_result("Get", get_result)
+# Query items.
+query_result = db.query({"age?gt": 25}, limit=10)
+print("Query result:", query_result)
 
-# Update an item
-update_result = db.update({"age": 31}, key="john-doe-py")
-print_result("Update", update_result)
+# Delete an item.
+db.delete("jane-doe-py")
 
-# Fetch items
-try:
-    fetch_result = db.query({"age": {"$gt": 25}}, limit=10)
-    print_result("Fetch", fetch_result)
-except Exception as exc:
-    print(f"Fetch operation failed: {exc}")
-
-# Delete an item
-delete_result = db.delete("jane-doe-py")
-
-# Delete everything
+# Delete all items.
 for item in db.query().items:
     db.delete(str(item["key"]))
